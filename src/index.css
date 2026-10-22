@@ -1,0 +1,79 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Cookie&family=Nunito+Sans:ital,opsz,wght@0,6..12,300..900;1,6..12,300..900&family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
+
+@font-face {
+  font-family: 'Cookie';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/Cookie-Regular.ttf') format('truetype');
+}
+
+@theme {
+  --font-serif: "Nunito Sans", sans-serif;
+  --font-sans: "Nunito Sans", sans-serif;
+  --font-script: "Cookie", cursive;
+}
+
+.font-brand-script {
+  font-family: "Cookie", cursive !important;
+  font-weight: 400 !important;
+}
+
+.font-sans-brand {
+  font-family: "Nunito Sans", "Poppins", sans-serif !important;
+}
+
+body {
+  font-family: "Nunito Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--text-color, #111827);
+  background-color: #ece6db;
+}
+
+input, textarea, select {
+  font-family: "Nunito Sans", sans-serif;
+  color: #111827; /* Force dark text for form fields */
+}
+
+.glass {
+  @apply backdrop-blur-lg border border-white/20;
+  background-color: var(--glass-color, rgba(255, 255, 255, 0.4));
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Nunito Sans", sans-serif;
+  color: var(--text-color, #111827);
+}
+
+/* Force dark, crisp readable headings and text in Admin, Orders Calendar & Admin Modals */
+.admin-area,
+.admin-area h1,
+.admin-area h2,
+.admin-area h3,
+.admin-area h4,
+.admin-area h5,
+.admin-area h6,
+.orders-calendar-container,
+.orders-calendar-container h1,
+.orders-calendar-container h2,
+.orders-calendar-container h3,
+.orders-calendar-container h4,
+.orders-calendar-container h5,
+.orders-calendar-container h6,
+.admin-modal,
+.admin-modal h1,
+.admin-modal h2,
+.admin-modal h3,
+.admin-modal h4,
+.admin-modal h5,
+.admin-modal h6,
+.force-dark-headings h1,
+.force-dark-headings h2,
+.force-dark-headings h3,
+.force-dark-headings h4,
+.force-dark-headings h5,
+.force-dark-headings h6 {
+  color: #111827 !important;
+}
