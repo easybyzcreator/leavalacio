@@ -184,12 +184,16 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
 
   // Vendedores / Representantes & Comissões (10%)
   const [selectedRepFilter, setSelectedRepFilter] = useState<string>('all');
+  const [repViewMode, setRepViewMode] = useState<'calendar' | 'list'>('calendar');
   const [commissionStatusFilter, setCommissionStatusFilter] = useState<'all' | 'pending' | 'paid' | 'unpriced'>('all');
   const [repSearchQuery, setRepSearchQuery] = useState<string>('');
   const [repPeriodFilter, setRepPeriodFilter] = useState<'all' | 'today' | 'yesterday' | 'this_week' | 'this_month' | 'last_month' | 'custom'>('all');
   const [repStartDate, setRepStartDate] = useState<string>('');
   const [repEndDate, setRepEndDate] = useState<string>('');
   const [newRepNameInput, setNewRepNameInput] = useState<string>('');
+  const [editingSalesRep, setEditingSalesRep] = useState<string | null>(null);
+  const [confirmingDeleteRep, setConfirmingDeleteRep] = useState<string | null>(null);
+  const [isUpdatingRep, setIsUpdatingRep] = useState<boolean>(false);
   const [assigningRepOrder, setAssigningRepOrder] = useState<{ id: string; customerName: string; currentRep: string } | null>(null);
 
   const uniqueSalesReps = useMemo(() => {
@@ -385,7 +389,55 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
       toast.error('Informe o nome do vendedor!');
       return;
     }
+
     const currentList = settings?.salesReps || [];
+
+    // Se estiver editando um vendedor existente
+    if (editingSalesRep !== null) {
+      const oldName = editingSalesRep;
+      const duplicateExists = uniqueSalesReps.some(
+        r => r.toLowerCase() === trimmed.toLowerCase() && r.toLowerCase() !== oldName.toLowerCase()
+      );
+      if (duplicateExists) {
+        toast.error(`Já existe outro vendedor cadastrado como "${trimmed}"!`);
+        return;
+      }
+
+      setIsUpdatingRep(true);
+      try {
+        const filtered = currentList.filter(r => r.toLowerCase() !== oldName.toLowerCase());
+        const updated = [...filtered, trimmed];
+        setSettings(prev => ({ ...prev, salesReps: updated }));
+        await setDoc(doc(db, 'configuracoes', 'geral'), { salesReps: updated }, { merge: true });
+
+        // Atualiza pedidos existentes vinculados ao nome antigo
+        const matchingOrders = orders.filter(
+          o => (o.salesRep || '').trim().toLowerCase() === oldName.toLowerCase()
+        );
+        if (matchingOrders.length > 0) {
+          await Promise.all(
+            matchingOrders.map(o =>
+              updateDoc(doc(db, 'pedidos', o.id), { salesRep: trimmed })
+            )
+          );
+        }
+
+        if (selectedRepFilter.toLowerCase() === oldName.toLowerCase()) {
+          setSelectedRepFilter(trimmed);
+        }
+
+        setEditingSalesRep(null);
+        setNewRepNameInput('');
+        toast.success(`Vendedor atualizado para "${trimmed}"!`);
+      } catch (e) {
+        console.error(e);
+        toast.error('Erro ao atualizar vendedor.');
+      } finally {
+        setIsUpdatingRep(false);
+      }
+      return;
+    }
+
     if (currentList.some(r => r.toLowerCase() === trimmed.toLowerCase())) {
       toast.error(`O vendedor "${trimmed}" já está cadastrado!`);
       return;
@@ -402,17 +454,46 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
     }
   };
 
+  const handleStartEditSalesRep = (rep: string) => {
+    setConfirmingDeleteRep(null);
+    setEditingSalesRep(rep);
+    setNewRepNameInput(rep);
+  };
+
   const handleRemoveSalesRep = async (repToRemove: string) => {
-    if (!window.confirm(`Deseja remover "${repToRemove}" da lista de vendedores cadastrados?`)) return;
+    setIsUpdatingRep(true);
     const currentList = settings?.salesReps || [];
     const updated = currentList.filter(r => r.toLowerCase() !== repToRemove.toLowerCase());
     setSettings(prev => ({ ...prev, salesReps: updated }));
     try {
       await setDoc(doc(db, 'configuracoes', 'geral'), { salesReps: updated }, { merge: true });
-      toast.success(`Vendedor "${repToRemove}" removido!`);
+
+      // Desvincula dos pedidos caso o vendedor só existisse via pedidos
+      const matchingOrders = orders.filter(
+        o => (o.salesRep || '').trim().toLowerCase() === repToRemove.toLowerCase()
+      );
+      if (matchingOrders.length > 0) {
+        await Promise.all(
+          matchingOrders.map(o =>
+            updateDoc(doc(db, 'pedidos', o.id), { salesRep: '' })
+          )
+        );
+      }
+
+      if (selectedRepFilter.toLowerCase() === repToRemove.toLowerCase()) {
+        setSelectedRepFilter('all');
+      }
+      if (editingSalesRep && editingSalesRep.toLowerCase() === repToRemove.toLowerCase()) {
+        setEditingSalesRep(null);
+        setNewRepNameInput('');
+      }
+      setConfirmingDeleteRep(null);
+      toast.success(`Vendedor "${repToRemove}" excluído com sucesso!`);
     } catch (e) {
       console.error(e);
       toast.error('Erro ao remover vendedor.');
+    } finally {
+      setIsUpdatingRep(false);
     }
   };
 
@@ -4898,6 +4979,10 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                 orders={filteredOrders}
                 settings={settings}
                 onPrintOrder={printOrder}
+                onEditOrder={(order) => {
+                  setIsEditingOrder(order);
+                  setEditOrderForm(order);
+                }}
                 onSwitchToList={(orderId) => {
                   setOrderViewMode('list');
                   if (orderId) {
@@ -5663,30 +5748,61 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
               </span>
             </div>
 
-            {/* Input e botão para adicionar vendedor */}
+            {/* Input e botão para adicionar ou editar vendedor */}
             <div className="flex flex-col sm:flex-row gap-2">
               <div className="relative flex-grow">
                 <input
                   type="text"
-                  placeholder="Digite o nome do novo vendedor (Ex: Lea, Jucilea, Carlos)..."
+                  placeholder={editingSalesRep ? `Novo nome para "${editingSalesRep}"...` : "Digite o nome do novo vendedor (Ex: Lea, Jucilea, Carlos)..."}
                   value={newRepNameInput}
                   onChange={e => setNewRepNameInput(e.target.value)}
                   onKeyDown={e => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       handleAddSalesRep();
+                    } else if (e.key === 'Escape' && editingSalesRep) {
+                      setEditingSalesRep(null);
+                      setNewRepNameInput('');
                     }
                   }}
-                  className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-purple-600 outline-none text-sm font-bold text-gray-900 bg-white placeholder-gray-400"
+                  className={cn(
+                    "w-full px-4 py-3 rounded-xl border-2 outline-none text-sm font-bold text-gray-900 bg-white placeholder-gray-400 transition-colors",
+                    editingSalesRep ? "border-blue-500 focus:border-blue-600" : "border-gray-200 focus:border-purple-600"
+                  )}
                 />
               </div>
               <button
                 type="button"
+                disabled={isUpdatingRep}
                 onClick={() => handleAddSalesRep()}
-                className="px-6 py-3 rounded-xl bg-purple-700 hover:bg-purple-800 active:scale-98 text-white font-black text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm shrink-0"
+                className={cn(
+                  "px-6 py-3 rounded-xl active:scale-98 text-white font-black text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm shrink-0 disabled:opacity-50",
+                  editingSalesRep ? "bg-blue-600 hover:bg-blue-700" : "bg-purple-700 hover:bg-purple-800"
+                )}
               >
-                <Plus size={18} /> Cadastrar Vendedor
+                {editingSalesRep ? (
+                  <>
+                    <Save size={18} /> Salvar Nome
+                  </>
+                ) : (
+                  <>
+                    <Plus size={18} /> Cadastrar Vendedor
+                  </>
+                )}
               </button>
+              {editingSalesRep && (
+                <button
+                  type="button"
+                  disabled={isUpdatingRep}
+                  onClick={() => {
+                    setEditingSalesRep(null);
+                    setNewRepNameInput('');
+                  }}
+                  className="px-4 py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold text-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer shrink-0"
+                >
+                  <X size={16} /> Cancelar
+                </button>
+              )}
             </div>
 
             {/* Chips de Vendedores Registrados */}
@@ -5695,23 +5811,60 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                 <span className="text-[11px] font-bold uppercase tracking-wider text-gray-600">Vendedores disponíveis no sistema:</span>
                 <div className="flex flex-wrap gap-2">
                   {uniqueSalesReps.map(rep => {
-                    const isExplicit = (settings?.salesReps || []).includes(rep);
+                    const isEditingThis = editingSalesRep === rep;
+                    const isConfirmingThis = confirmingDeleteRep === rep;
                     return (
                       <div 
                         key={rep}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-50 border border-purple-200 text-purple-950 text-xs font-bold shadow-2xs"
+                        className={cn(
+                          "inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold shadow-2xs transition-all",
+                          isEditingThis
+                            ? "bg-blue-50 border-blue-400 text-blue-950"
+                            : isConfirmingThis
+                              ? "bg-red-50 border-red-300 text-red-950"
+                              : "bg-purple-50 border-purple-200 text-purple-950"
+                        )}
                       >
-                        <Briefcase size={13} className="text-purple-700" />
+                        <Briefcase size={13} className={isEditingThis ? "text-blue-700" : isConfirmingThis ? "text-red-600" : "text-purple-700"} />
                         <span>{rep}</span>
-                        {isExplicit && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveSalesRep(rep)}
-                            title={`Remover ${rep} do cadastro`}
-                            className="p-0.5 hover:bg-purple-200 text-purple-700 hover:text-red-700 rounded-md transition-colors cursor-pointer ml-0.5"
-                          >
-                            <X size={13} />
-                          </button>
+                        {isConfirmingThis ? (
+                          <div className="inline-flex items-center gap-1 ml-1">
+                            <button
+                              type="button"
+                              disabled={isUpdatingRep}
+                              onClick={() => handleRemoveSalesRep(rep)}
+                              className="px-2 py-0.5 rounded-md bg-red-600 hover:bg-red-700 text-white text-[10px] font-black cursor-pointer disabled:opacity-50"
+                            >
+                              Excluir
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isUpdatingRep}
+                              onClick={() => setConfirmingDeleteRep(null)}
+                              className="px-1.5 py-0.5 rounded-md bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 text-[10px] font-bold cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="inline-flex items-center gap-0.5 ml-0.5">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditSalesRep(rep)}
+                              title={`Editar nome de ${rep}`}
+                              className="p-1 hover:bg-purple-200/80 text-purple-700 hover:text-blue-700 rounded-md transition-colors cursor-pointer"
+                            >
+                              <Edit2 size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmingDeleteRep(rep)}
+                              title={`Excluir ${rep}`}
+                              className="p-1 hover:bg-red-100 text-purple-700 hover:text-red-700 rounded-md transition-colors cursor-pointer"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
                         )}
                       </div>
                     );
@@ -5844,7 +5997,61 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
             )}
           </div>
 
+          {/* Alternância de Visualização: Calendário vs Lista de Comissões */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex bg-gray-200/80 p-1 rounded-2xl shadow-inner w-fit">
+              <button
+                type="button"
+                onClick={() => setRepViewMode('calendar')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer",
+                  repViewMode === 'calendar'
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-600 hover:text-gray-900"
+                )}
+              >
+                <Calendar size={15} />
+                <span>Calendário / Cronograma</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRepViewMode('list')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer",
+                  repViewMode === 'list'
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-600 hover:text-gray-900"
+                )}
+              >
+                <Package size={15} />
+                <span>Lista de Pedidos &amp; Comissões ({repOrders.length})</span>
+              </button>
+            </div>
+          </div>
+
+          {/* MODO CALENDÁRIO CORPORATIVO */}
+          {repViewMode === 'calendar' && (
+            <OrdersCalendar
+              orders={repOrders}
+              settings={settings}
+              onPrintOrder={printOrder}
+              onEditOrder={(order) => {
+                setIsEditingOrder(order);
+                setEditOrderForm(order);
+              }}
+              onSwitchToList={(orderId) => {
+                setRepViewMode('list');
+                if (orderId) {
+                  setTimeout(() => {
+                    document.getElementById('rep-order-' + orderId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }, 100);
+                }
+              }}
+            />
+          )}
+
           {/* Lista de Pedidos Corporativos & Comissões (Cards 100% Opacos) */}
+          {repViewMode === 'list' && (
           <div className="space-y-3">
             {repOrders.length === 0 ? (
               <div className="bg-white p-12 rounded-2xl border-2 border-gray-200 shadow-md text-center text-gray-600 font-medium">
@@ -5864,7 +6071,8 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
 
                 return (
                   <div 
-                    key={order.id} 
+                    key={order.id}
+                    id={`rep-order-${order.id}`}
                     className="bg-white p-5 rounded-2xl border-2 border-gray-200 shadow-md hover:shadow-lg hover:border-purple-300 transition-all space-y-4"
                   >
                     {/* Linha de Cima: Vendedor, Empresa, Status */}
@@ -6071,6 +6279,7 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
               })
             )}
           </div>
+          )}
         </motion.div>
       )}
       </main>

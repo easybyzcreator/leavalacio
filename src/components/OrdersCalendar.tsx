@@ -4,7 +4,7 @@ import {
   Calendar as CalendarIcon, ChevronLeft, ChevronRight, Clock, 
   CheckCircle2, AlertCircle, Rocket, X, Printer, Phone, Mail, 
   MapPin, Cake, Layers, FileText, Check, ArrowRight, Truck,
-  RotateCcw, PackageCheck
+  RotateCcw, PackageCheck, Edit2, Save
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -17,6 +17,7 @@ interface OrdersCalendarProps {
   settings: Settings;
   onPrintOrder: (order: Order) => void;
   onSwitchToList?: (orderId?: string) => void;
+  onEditOrder?: (order: Order) => void;
 }
 
 export function parseOrderDate(order: Order): Date {
@@ -125,7 +126,8 @@ export default function OrdersCalendar({
   orders,
   settings,
   onPrintOrder,
-  onSwitchToList
+  onSwitchToList,
+  onEditOrder
 }: OrdersCalendarProps) {
   const [viewMode, setViewMode] = useState<'week' | 'list' | 'month'>('week');
   const [currentDate, setCurrentDate] = useState<Date>(() => {
@@ -135,9 +137,16 @@ export default function OrdersCalendar({
   });
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isEditingDeliveryDate, setIsEditingDeliveryDate] = useState(false);
+  const [deliveryDateInput, setDeliveryDateInput] = useState('');
+  const [deliveryTimeInput, setDeliveryTimeInput] = useState('');
   const [filterValidation, setFilterValidation] = useState<'all' | 'validated' | 'pending'>('all');
   const [filterDelivery, setFilterDelivery] = useState<'all' | 'delivered' | 'pending'>('all');
   const [filterPayment, setFilterPayment] = useState<'all' | 'paid' | 'half' | 'unpaid'>('all');
+
+  useEffect(() => {
+    setIsEditingDeliveryDate(false);
+  }, [selectedOrder?.id]);
 
   const currencySymbol = settings.currency === 'USD' ? '$' : 'R$';
 
@@ -427,6 +436,49 @@ export default function OrdersCalendar({
     } catch (err) {
       console.error(err);
       toast.error('Erro ao atualizar status de entrega.');
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
+  const handleStartEditDeliveryDate = (order: Order) => {
+    const parsed = parseOrderDate(order);
+    const yyyy = parsed.getFullYear();
+    const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+    const dd = String(parsed.getDate()).padStart(2, '0');
+    setDeliveryDateInput(`${yyyy}-${mm}-${dd}`);
+    setDeliveryTimeInput(order.pickupTime || '');
+    setIsEditingDeliveryDate(true);
+  };
+
+  const handleSaveDeliveryDate = async () => {
+    if (!selectedOrder || !deliveryDateInput) {
+      toast.error('Selecione uma data de entrega válida.');
+      return;
+    }
+    const [yyyy, mm, dd] = deliveryDateInput.split('-');
+    const formattedPickupDate = `${mm}/${dd}/${yyyy}`;
+    const trimmedTime = deliveryTimeInput.trim();
+
+    try {
+      setIsUpdatingStatus(true);
+      const payload: Record<string, any> = {
+        pickupDate: formattedPickupDate
+      };
+      if (trimmedTime) {
+        payload.pickupTime = trimmedTime;
+      }
+      await updateDoc(doc(db, 'pedidos', selectedOrder.id), payload);
+      setSelectedOrder({
+        ...selectedOrder,
+        pickupDate: formattedPickupDate,
+        ...(trimmedTime ? { pickupTime: trimmedTime } : {})
+      });
+      setIsEditingDeliveryDate(false);
+      toast.success('Data de entrega atualizada com sucesso!');
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro ao atualizar a data de entrega.');
     } finally {
       setIsUpdatingStatus(false);
     }
@@ -1317,18 +1369,77 @@ export default function OrdersCalendar({
                 </div>
 
                 {/* Scheduled Date & Time Header */}
-                <div className="p-4 rounded-2xl bg-gray-50 border border-gray-200/80 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
-                    <Clock size={20} />
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-bold uppercase text-gray-500" style={{ color: '#6b7280' }}>
-                      Horário e Data Agendada
+                <div className="p-4 rounded-2xl bg-gray-50 border border-gray-200/80 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                        <Clock size={20} />
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold uppercase text-gray-500" style={{ color: '#6b7280' }}>
+                          Horário e Data Agendada
+                        </div>
+                        <div className="text-sm font-extrabold text-gray-900" style={{ color: '#111827' }}>
+                          {getOrderTimeDisplay(selectedOrder)} • {selectedOrder.pickupDate || (selectedOrder.createdAt?.toDate ? selectedOrder.createdAt.toDate().toLocaleDateString('pt-BR') : 'Data não informada')}
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-sm font-extrabold text-gray-900" style={{ color: '#111827' }}>
-                      {getOrderTimeDisplay(selectedOrder)} • {selectedOrder.pickupDate || (selectedOrder.createdAt?.toDate ? selectedOrder.createdAt.toDate().toLocaleDateString('pt-BR') : 'Data não informada')}
-                    </div>
+
+                    {!isEditingDeliveryDate && (
+                      <button
+                        type="button"
+                        onClick={() => handleStartEditDeliveryDate(selectedOrder)}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs shrink-0"
+                      >
+                        <Edit2 size={13} /> Editar Data
+                      </button>
+                    )}
                   </div>
+
+                  {isEditingDeliveryDate && (
+                    <div className="pt-3 border-t border-gray-200/80 flex flex-col sm:flex-row items-stretch sm:items-end gap-2.5">
+                      <div className="flex-1 space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-gray-600 block">
+                          Nova Data de Entrega
+                        </label>
+                        <input
+                          type="date"
+                          value={deliveryDateInput}
+                          onChange={e => setDeliveryDateInput(e.target.value)}
+                          className="w-full p-2.5 rounded-xl border border-gray-300 bg-white text-xs font-bold text-gray-900 focus:border-blue-600 outline-none"
+                        />
+                      </div>
+                      <div className="sm:w-36 space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-gray-600 block">
+                          Horário (Opcional)
+                        </label>
+                        <input
+                          type="time"
+                          value={deliveryTimeInput}
+                          onChange={e => setDeliveryTimeInput(e.target.value)}
+                          className="w-full p-2.5 rounded-xl border border-gray-300 bg-white text-xs font-bold text-gray-900 focus:border-blue-600 outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={isUpdatingStatus}
+                          onClick={handleSaveDeliveryDate}
+                          className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+                        >
+                          <Save size={13} /> Salvar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isUpdatingStatus}
+                          onClick={() => setIsEditingDeliveryDate(false)}
+                          className="px-3 py-2.5 rounded-xl bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 text-xs font-bold cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Customer Data */}
@@ -1483,7 +1594,20 @@ export default function OrdersCalendar({
                   </button>
                 )}
 
-                <div className="flex items-center gap-2 ml-auto">
+                <div className="flex flex-wrap items-center gap-2 ml-auto">
+                  {onEditOrder && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const orderToEdit = selectedOrder;
+                        setSelectedOrder(null);
+                        onEditOrder(orderToEdit);
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Edit2 size={14} /> Editar Pedido
+                    </button>
+                  )}
                   <button
                     onClick={() => onPrintOrder(selectedOrder)}
                     className="px-4 py-2.5 rounded-xl bg-white border border-gray-300 text-gray-800 hover:bg-gray-100 text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"

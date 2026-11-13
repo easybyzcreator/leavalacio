@@ -795,12 +795,6 @@ export default function Menu({
   const totalB2bPackages = cart.reduce((sum, item) => sum + getB2bItemPackages(item), 0);
 
   const checkB2bLimit = () => {
-    if (selectedCatalog === 'catalog_b2b') {
-      if (totalB2bPackages < 50) {
-        toast.error(`Minimum order for Corporate Account is 50 packages. Currently selected: ${totalB2bPackages} pkgs. Please add at least ${50 - totalB2bPackages} more.`);
-        return false;
-      }
-    }
     return true;
   };
 
@@ -1033,11 +1027,6 @@ export default function Menu({
     e.preventDefault();
     if (!b2bName.trim() || !b2bResponsibleName.trim() || !b2bPhone.trim() || !b2bAddress.trim() || !b2bZipCode.trim() || !b2bCity.trim() || !b2bDate) {
       toast.error('Please fill in all required fields!');
-      return;
-    }
-
-    if (totalB2bPackages < 50) {
-      toast.error(`Minimum order is 50 packages. Currently selected: ${totalB2bPackages} pkgs. Please add at least ${50 - totalB2bPackages} more packages.`);
       return;
     }
 
@@ -1993,40 +1982,17 @@ export default function Menu({
                     <div className="pt-4 border-t border-gray-200 flex flex-col gap-2">
                       {selectedCatalog === 'catalog_b2b' ? (
                         <div className="space-y-3">
-                          {/* Packages Status Card */}
-                          <div className={cn(
-                            "p-4 rounded-2xl border text-xs font-sans space-y-2",
-                            totalB2bPackages >= 50
-                              ? "bg-emerald-50 border-emerald-300 text-emerald-950"
-                              : "bg-amber-50 border-amber-300 text-amber-950"
-                          )}>
+                          {/* Packages Count Summary */}
+                          <div className="p-3.5 rounded-2xl border border-stone-200 bg-white/70 text-stone-900 text-xs font-sans">
                             <div className="flex items-center justify-between font-bold text-sm">
-                              <span className="flex items-center gap-1.5">
-                                <Package size={16} className={totalB2bPackages >= 50 ? "text-emerald-700" : "text-amber-700"} />
+                              <span className="flex items-center gap-1.5 text-stone-800">
+                                <Package size={16} className="text-stone-700" />
                                 Total Packages in Order:
                               </span>
-                              <span className={cn(
-                                "text-base font-black px-3 py-1 rounded-xl shadow-xs",
-                                totalB2bPackages >= 50 ? "bg-emerald-600 text-white" : "bg-white text-amber-950 border border-amber-300"
-                              )}>
+                              <span className="text-sm font-black px-3 py-1 rounded-xl bg-stone-100 text-stone-900 border border-stone-200">
                                 {totalB2bPackages} pkgs
                               </span>
                             </div>
-
-                            {totalB2bPackages >= 50 ? (
-                              <p className="font-bold text-emerald-800 flex items-center gap-1.5 pt-1">
-                                ✓ Minimum wholesale requirement met ({totalB2bPackages} / 50 pkgs).
-                              </p>
-                            ) : (
-                              <div className="space-y-1 pt-1">
-                                <p className="font-black text-amber-950 flex items-center gap-1.5">
-                                  ⚠️ Minimum order rule: at least 50 pkgs required.
-                                </p>
-                                <p className="text-[11px] text-amber-900/90 leading-relaxed font-semibold">
-                                  Each box contains 25 units. Please add at least <strong>{50 - totalB2bPackages} more packages</strong> to proceed with your corporate order.
-                                </p>
-                              </div>
-                            )}
                           </div>
 
                           {/* Corporate Pricing Breakdown with 8.75% Sales Tax */}
@@ -2079,43 +2045,18 @@ export default function Menu({
                       type="button"
                       onClick={() => {
                         if (selectedCatalog === 'catalog_b2b') {
-                          if (totalB2bPackages < 50) {
-                            setIsModalOpen(false);
-                            toast.info(
-                              settings.language === 'en'
-                                ? `Returning to catalog. Please choose at least ${50 - totalB2bPackages} more packages to complete your corporate order.`
-                                : `Voltando ao catálogo. Escolha mais ${50 - totalB2bPackages} pacotes para completar seu pedido corporativo.`
-                            );
-                            return;
-                          }
                           setCheckoutStep('form');
                         } else if (checkMarmitifyLimit()) {
                           setCheckoutStep('form');
                         }
                       }}
-                      className={cn(
-                        "w-full py-4 rounded-xl font-bold text-base md:text-lg shadow-xl transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-2",
-                        selectedCatalog === 'catalog_b2b' && totalB2bPackages < 50 && "hover:brightness-105"
-                      )}
+                      className="w-full py-4 rounded-xl font-bold text-base md:text-lg shadow-xl transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-2"
                       style={{ backgroundColor: settings.primaryColor, color: getContrastText(settings.primaryColor) }}
                     >
                       {selectedCatalog === 'catalog_b2b'
-                        ? (totalB2bPackages >= 50 
-                            ? (settings.language === 'en' ? 'Proceed to Company Details' : 'Avançar para Dados da Empresa')
-                            : (settings.language === 'en' 
-                                ? `Add ${50 - totalB2bPackages} more pkgs (Back to Catalog)` 
-                                : `Adicionar mais ${50 - totalB2bPackages} pctes (Voltar ao Catálogo)`))
+                        ? (settings.language === 'en' ? 'Proceed to Company Details' : 'Avançar para Dados da Empresa')
                         : t.next}
                     </button>
-                    {selectedCatalog === 'catalog_b2b' && totalB2bPackages < 50 && (
-                      <button
-                        type="button"
-                        onClick={() => setIsModalOpen(false)}
-                        className="w-full text-center text-xs font-bold text-stone-700 hover:text-black py-1 cursor-pointer transition-colors underline"
-                      >
-                        {settings.language === 'en' ? '← Choose more flavors from catalog' : '← Escolher mais sabores no catálogo'}
-                      </button>
-                    )}
                   </div>
                 ) : checkoutStep === 'channels' ? (
                   <div className="space-y-6 text-center py-4 font-sans text-black animate-fade-in">
