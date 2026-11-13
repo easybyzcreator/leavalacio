@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { 
   collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, setDoc, 
@@ -64,6 +64,15 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
   setSettings: React.Dispatch<React.SetStateAction<Settings>>,
   setIsAdmin: React.Dispatch<React.SetStateAction<boolean>>
 }) {
+  const mainScrollRef = useRef<HTMLElement | null>(null);
+  const scrollToAdminTop = () => {
+    setTimeout(() => {
+      if (mainScrollRef.current) {
+        mainScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 30);
+  };
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [password, setPassword] = useState('');
   const [galleryIdToDelete, setGalleryIdToDelete] = useState<string | null>(null);
@@ -103,18 +112,20 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
     tag: ''
   });
   const [priceInput, setPriceInput] = useState('');
-  const [sizeForm, setSizeForm] = useState({ name: '', price: '', oldPrice: '' });
+  const [sizeForm, setSizeForm] = useState({ name: '', price: '', oldPrice: '', unitPrice: '' });
   const [editingSizeId, setEditingSizeId] = useState<string | null>(null);
 
   const [isEditingCategory, setIsEditingCategory] = useState<Category | null>(null);
   const [newCategory, setNewCategory] = useState({ title: '', order: 0, catalog: 'both' as 'catalog1' | 'catalog2' | 'both' | 'catalog_b2b' });
 
   const [copied, setCopied] = useState(false);
+  const [copiedB2b, setCopiedB2b] = useState(false);
   const [orderSearch, setOrderSearch] = useState('');
   const [orderTypeTab, setOrderTypeTab] = useState<'retail' | 'b2b' | 'all'>('retail');
   const [orderViewMode, setOrderViewMode] = useState<'calendar' | 'list'>('calendar');
   const [orderValidationFilter, setOrderValidationFilter] = useState<'all' | 'validated' | 'pending'>('all');
   const [customerSearch, setCustomerSearch] = useState('');
+  const [productSearch, setProductSearch] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [showBirthdaysOnly, setShowBirthdaysOnly] = useState(false);
@@ -158,29 +169,17 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
   const [addItemQuantity, setAddItemQuantity] = useState(1);
 
   const updateOrderFormWithItems = (updatedItems: any[]) => {
-    const isCorp = editOrderForm.isB2B || editOrderForm.isPJ;
     const subtotalVal = updatedItems.reduce((acc, it) => acc + (it.price * it.quantity), 0);
-    if (isCorp) {
-      setEditOrderForm({
-        ...editOrderForm,
-        items: updatedItems,
-        total: subtotalVal,
-        subtotal: subtotalVal,
-        taxRate: 0,
-        taxAmount: 0
-      });
-    } else {
-      const taxAmountVal = subtotalVal * 0.0875;
-      const totalWithTaxVal = subtotalVal + taxAmountVal;
-      setEditOrderForm({
-        ...editOrderForm,
-        items: updatedItems,
-        total: totalWithTaxVal,
-        subtotal: subtotalVal,
-        taxRate: 8.75,
-        taxAmount: taxAmountVal
-      });
-    }
+    const taxAmountVal = subtotalVal * 0.0875;
+    const totalWithTaxVal = subtotalVal + taxAmountVal;
+    setEditOrderForm({
+      ...editOrderForm,
+      items: updatedItems,
+      total: totalWithTaxVal,
+      subtotal: subtotalVal,
+      taxRate: 8.75,
+      taxAmount: taxAmountVal
+    });
   };
 
   // Vendedores / Representantes & Comissões (10%)
@@ -783,30 +782,34 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
       return;
     }
     const priceVal = sizeForm.price ? (parseFloat(sizeForm.price.replace(/\D/g, '')) / 100) : 0;
+    const unitPriceVal = sizeForm.unitPrice ? (parseFloat(sizeForm.unitPrice.replace(/\D/g, '')) / 100) : 0;
     
     if (editingSizeId) {
       setNewProduct((prev: any) => ({
         ...prev,
         sizes: (prev.sizes || []).map((s: any) => 
-          s.id === editingSizeId ? { ...s, name: sizeForm.name, price: priceVal } : s
+          s.id === editingSizeId ? { ...s, name: sizeForm.name, price: priceVal, unitPrice: unitPriceVal } : s
         )
       }));
       setEditingSizeId(null);
-      setSizeForm({ name: '', price: '', oldPrice: '' });
+      setSizeForm({ name: '', price: '', oldPrice: '', unitPrice: '' });
       toast.success('Opção de tamanho atualizada!');
     } else {
-      const newSizeOption = {
+      const newSizeOption: any = {
         id: Math.random().toString(36).substr(2, 9),
         name: sizeForm.name,
         price: priceVal
       };
+      if (unitPriceVal > 0) {
+        newSizeOption.unitPrice = unitPriceVal;
+      }
       
       setNewProduct((prev: any) => ({
         ...prev,
         sizes: [...(prev.sizes || []), newSizeOption]
       }));
       
-      setSizeForm({ name: '', price: '', oldPrice: '' });
+      setSizeForm({ name: '', price: '', oldPrice: '', unitPrice: '' });
       toast.success('Opção de tamanho adicionada!');
     }
   };
@@ -819,13 +822,54 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
         return;
       }
 
+      // Sanitize payload to remove any undefined values (Firestore rejects undefined)
+      const sanitizedSizes = (newProduct.sizes || []).map((s: any) => {
+        const cleanSize: any = {
+          id: s.id || Math.random().toString(36).substr(2, 9),
+          name: s.name || '',
+          price: typeof s.price === 'number' && !isNaN(s.price) ? s.price : 0
+        };
+        if (typeof s.oldPrice === 'number' && !isNaN(s.oldPrice)) {
+          cleanSize.oldPrice = s.oldPrice;
+        }
+        if (typeof s.unitPrice === 'number' && !isNaN(s.unitPrice) && s.unitPrice > 0) {
+          cleanSize.unitPrice = s.unitPrice;
+        }
+        return cleanSize;
+      });
+
+      const rawPayload: Record<string, any> = {
+        ...newProduct,
+        title: newProduct.title || '',
+        description: newProduct.description || '',
+        price: typeof newProduct.price === 'number' && !isNaN(newProduct.price) ? newProduct.price : 0,
+        oldPrice: typeof newProduct.oldPrice === 'number' && !isNaN(newProduct.oldPrice) ? newProduct.oldPrice : 0,
+        priceType: newProduct.priceType || 'fixed',
+        image: newProduct.image || '',
+        categoryId: newProduct.categoryId || '',
+        isMeal: !!newProduct.isMeal,
+        isCustomCake: !!newProduct.isCustomCake,
+        ingredients: newProduct.ingredients || '',
+        allowedSides: newProduct.allowedSides || [],
+        isActive: newProduct.isActive ?? true,
+        hasSizes: !!newProduct.hasSizes,
+        sizes: sanitizedSizes,
+        cakeGalleryId: newProduct.cakeGalleryId || '',
+        tag: newProduct.tag || '',
+        b2bFromPriceMode: newProduct.b2bFromPriceMode || 'default'
+      };
+
+      const cleanPayload = Object.fromEntries(
+        Object.entries(rawPayload).filter(([_, v]) => v !== undefined)
+      );
+
       if (isEditingProduct) {
-        await updateDoc(doc(db, 'produtos', isEditingProduct.id), newProduct);
+        await updateDoc(doc(db, 'produtos', isEditingProduct.id), cleanPayload);
         setIsEditingProduct(null);
         toast.success('Produto atualizado com sucesso!');
       } else {
         const categoryCount = products.filter(p => p.categoryId === newProduct.categoryId).length;
-        await addDoc(collection(db, 'produtos'), { ...newProduct, order: categoryCount + 1, isActive: true });
+        await addDoc(collection(db, 'produtos'), { ...cleanPayload, order: categoryCount + 1, isActive: true });
         toast.success('Produto adicionado com sucesso!');
       }
       setNewProduct({ 
@@ -844,14 +888,16 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
         hasSizes: false,
         sizes: [],
         cakeGalleryId: '',
-        tag: ''
+        tag: '',
+        b2bFromPriceMode: 'default'
       });
       setPriceInput('');
       setOldPriceInput('');
       setEditingSizeId(null);
-      setSizeForm({ name: '', price: '', oldPrice: '' });
-    } catch (err) {
-      toast.error('Erro ao salvar produto.');
+      setSizeForm({ name: '', price: '', oldPrice: '', unitPrice: '' });
+    } catch (err: any) {
+      console.error('Erro ao salvar produto:', err);
+      toast.error(err?.message?.includes('exceeds the maximum') ? 'A imagem é muito grande para salvar. Escolha uma imagem menor.' : 'Erro ao salvar produto.');
     }
   };
 
@@ -1411,6 +1457,13 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const copyB2bLink = () => {
+    const url = `${window.location.origin}/order`;
+    navigator.clipboard.writeText(url);
+    setCopiedB2b(true);
+    setTimeout(() => setCopiedB2b(false), 2000);
+  };
+
   const printOrder = (order: Order) => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
@@ -1753,7 +1806,7 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
               </div>
 
               <div class="summary-box">
-                ${(order.total > 0 && !isB2B) ? `
+                ${(order.total > 0 && (!isB2B || order.taxRate === 8.75 || Boolean(order.taxAmount && order.taxAmount > 0))) ? `
                   <div class="summary-line">
                     <span>Subtotal:</span>
                     <span>${currencySymbol} ${(order.subtotal || (order.total / 1.0875)).toFixed(2).replace('.', ',')}</span>
@@ -1928,31 +1981,39 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
 
   const handleStartEditProduct = (product: Product) => {
     setIsEditingProduct(product);
-    setNewProduct({
-      title: product.title,
-      description: product.description,
-      price: product.price,
+    const normalizedSizes = (product.sizes || []).map((s: any) => ({
+      ...s,
+      id: s.id || Math.random().toString(36).substr(2, 9)
+    }));
+    const editPayload: Omit<Product, 'id'> = {
+      title: product.title || '',
+      description: product.description || '',
+      price: typeof product.price === 'number' ? product.price : 0,
       oldPrice: product.oldPrice || 0,
       priceType: product.priceType || 'fixed',
-      image: product.image,
-      categoryId: product.categoryId,
+      image: product.image || '',
+      categoryId: product.categoryId || '',
       isMeal: product.isMeal || false,
       isCustomCake: product.isCustomCake || false,
       ingredients: product.ingredients || '',
       allowedSides: product.allowedSides || [],
       isActive: product.isActive ?? true,
       hasSizes: product.hasSizes || false,
-      sizes: product.sizes || [],
+      sizes: normalizedSizes,
       cakeGalleryId: product.cakeGalleryId || '',
-      order: product.order,
-      tag: product.tag || ''
-    });
+      tag: product.tag || '',
+      b2bFromPriceMode: product.b2bFromPriceMode || 'default'
+    };
+    if (typeof product.order === 'number') {
+      editPayload.order = product.order;
+    }
+    setNewProduct(editPayload);
     setPriceInput(product.price ? product.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '');
     setEditingSizeId(null);
-    setSizeForm({ name: '', price: '', oldPrice: '' });
+    setSizeForm({ name: '', price: '', oldPrice: '', unitPrice: '' });
     setOldPriceInput(product.oldPrice ? product.oldPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '');
     setActiveTab('menu');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollToAdminTop();
   };
 
   const handleMoveProduct = async (index: number, direction: 'up' | 'down') => {
@@ -2182,7 +2243,7 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
         </button>
       </div>
 
-      <main className="flex-grow p-4 md:p-10 overflow-y-auto min-w-0 w-full">
+      <main ref={mainScrollRef} className="flex-grow p-4 md:p-10 overflow-y-auto min-w-0 w-full">
         {activeTab === 'galleries' && (
           <div className="max-w-5xl space-y-8 pb-10">
             <div className="flex items-center justify-between border-b border-gray-200/50 pb-4">
@@ -2799,6 +2860,25 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                 </div>
 
                 <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase text-gray-500 block">
+                    Exibição do Preço &quot;From / A partir de&quot; na Lista Corporativa
+                  </label>
+                  <select
+                    className="w-full p-3 rounded-xl border border-gray-300 bg-white text-xs font-bold text-black cursor-pointer"
+                    value={settings?.b2bFromPriceMode || 'min_total'}
+                    onChange={e => setSettings({...settings, b2bFromPriceMode: e.target.value as any})}
+                  >
+                    <option value="min_total">Menor valor da caixa (Padrão)</option>
+                    <option value="max_total">Maior valor da caixa (maior pacote/caixa)</option>
+                    <option value="min_unit">Menor valor unitário / each (menor valor por unidade)</option>
+                    <option value="max_unit">Maior valor unitário / each (maior valor por unidade)</option>
+                  </select>
+                  <span className="text-[10px] text-gray-500 font-medium block">
+                    Define qual valor aparece em destaque nos cards do catálogo Corporate Account antes de abrir os detalhes.
+                  </span>
+                </div>
+
+                <div className="space-y-2">
                   <label className="text-xs font-bold uppercase text-gray-500 block">Título do Banner Informativo no Carrinho B2B (Português)</label>
                   <input 
                     type="text"
@@ -3335,6 +3415,81 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                           console.error('Error downloading QR code:', error);
                           const appLink = `${window.location.origin}/?slug=${settings?.slug || 'easy-cake-menu'}`;
                           window.open(`https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(appLink)}`, '_blank');
+                        }
+                      }}
+                      className="w-full py-2 px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 hover:brightness-110 active:scale-95 cursor-pointer text-black shadow-sm"
+                      style={{ backgroundColor: '#efedea', color: '#000000' }}
+                    >
+                      <Download size={14} className="text-black" />
+                      <span className="text-black">Baixar QR Code</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white/85 backdrop-blur-md rounded-3xl p-6 sm:p-8 space-y-6 border border-stone-200 shadow-md">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-2xl font-serif font-black text-stone-900">Cardápio Corporativo (/order) — Link &amp; QR Code</h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300">
+                      Exclusivo Corporate Account
+                    </span>
+                  </div>
+                  <p className="text-sm font-semibold text-stone-600">
+                    Link direto exclusivo para clientes corporativos (B2B) abrirem diretamente o catálogo Corporate Account:
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+                  <div className="md:col-span-2 space-y-4">
+                    <div className="flex flex-col sm:flex-row items-center gap-3">
+                      <div className="flex-grow w-full bg-stone-50 p-4 rounded-2xl font-mono text-xs sm:text-sm font-bold break-all border-2 border-stone-200 text-stone-900 shadow-inner select-all">
+                        {`${window.location.origin}/order`}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={copyB2bLink}
+                        className="w-full sm:w-auto px-6 py-4 rounded-2xl font-black transition-all uppercase tracking-wider text-xs active:scale-95 text-center cursor-pointer shadow-sm text-white bg-stone-900 hover:bg-black whitespace-nowrap flex-shrink-0"
+                      >
+                        {copiedB2b ? '✓ COPIADO!' : 'COPIAR LINK'}
+                      </button>
+                    </div>
+
+                    <div className="text-xs space-y-2 leading-relaxed text-stone-700 font-medium bg-stone-50/90 p-4 rounded-2xl border border-stone-200">
+                      <p>🏢 <strong className="text-stone-900 font-bold">Acesso Direto B2B:</strong> Quem acessar <span className="font-mono font-bold text-stone-900">/order</span> ou escanear este QR Code entra direto no cardápio <strong className="text-stone-900">Corporate Account</strong>, sem passar pela tela inicial ou pelos outros catálogos.</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-center justify-center p-4 rounded-2xl bg-white/5 border border-white/10 space-y-3">
+                    <div className="p-3 bg-white rounded-xl shadow-md">
+                      <img
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${window.location.origin}/order`)}`}
+                        alt="QR Code Corporate Account"
+                        className="w-32 h-32 object-contain"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const b2bLink = `${window.location.origin}/order`;
+                          const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(b2bLink)}`;
+                          const response = await fetch(qrUrl);
+                          const blob = await response.blob();
+                          const url = window.URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `qrcode-corporate-${settings?.slug || 'menu'}.png`;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          window.URL.revokeObjectURL(url);
+                          toast.success('QR Code Corporativo baixado com sucesso!');
+                        } catch (error) {
+                          console.error('Error downloading Corporate QR code:', error);
+                          const b2bLink = `${window.location.origin}/order`;
+                          window.open(`https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(b2bLink)}`, '_blank');
                         }
                       }}
                       className="w-full py-2 px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 hover:brightness-110 active:scale-95 cursor-pointer text-black shadow-sm"
@@ -3896,19 +4051,19 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                       <div className="space-y-4 pl-8 mt-2 text-black">
                         <div className="bg-white/40 p-4 rounded-xl border border-gray-200 space-y-3">
                           <span className="text-[11px] font-bold uppercase tracking-wider text-gray-900 opacity-95">Adicionar Tamanho/Preço</span>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div className="space-y-1">
                               <label className="text-[9px] font-bold uppercase text-gray-700 opacity-90">Nome da Opção</label>
                               <input 
                                 type="text"
-                                placeholder="Ex: Pequeno / 10 Pessoas"
+                                placeholder="Ex: 25 pkgs / 10 Pessoas"
                                 className="w-full p-2 text-xs rounded-lg border border-gray-300 bg-white text-black font-sans"
                                 value={sizeForm.name}
                                 onChange={e => setSizeForm({ ...sizeForm, name: e.target.value })}
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[9px] font-bold uppercase text-gray-700 opacity-90">Preço ({currencySymbol})</label>
+                              <label className="text-[9px] font-bold uppercase text-gray-700 opacity-90">Preço Total ({currencySymbol})</label>
                               <input 
                                 type="text"
                                 placeholder="0,00"
@@ -3924,6 +4079,42 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                                   setSizeForm({ ...sizeForm, price: val.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) });
                                 }}
                               />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[9px] font-bold uppercase text-gray-700 opacity-90">Valor Unitário ({currencySymbol}) (Opcional)</label>
+                              <input 
+                                type="text"
+                                placeholder="0,00"
+                                className="w-full p-2 text-xs rounded-lg border border-gray-300 bg-white text-black font-sans"
+                                value={sizeForm.unitPrice}
+                                onChange={e => {
+                                  const digits = e.target.value.replace(/\D/g, '');
+                                  if (!digits) {
+                                    setSizeForm({ ...sizeForm, unitPrice: '' });
+                                    return;
+                                  }
+                                  const val = parseInt(digits) / 100;
+                                  setSizeForm({ ...sizeForm, unitPrice: val.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) });
+                                }}
+                              />
+                              {(() => {
+                                const qtyMatch = sizeForm.name.match(/(\d+)/);
+                                const totalNum = sizeForm.price ? (parseFloat(sizeForm.price.replace(/\D/g, '')) / 100) : 0;
+                                const qty = qtyMatch ? parseInt(qtyMatch[1], 10) : 0;
+                                if (qty > 1 && totalNum > 0) {
+                                  const suggested = totalNum / qty;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => setSizeForm({ ...sizeForm, unitPrice: suggested.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })}
+                                      className="text-[9px] font-bold text-blue-700 hover:underline cursor-pointer block mt-0.5 text-left"
+                                    >
+                                      Usar {currencySymbol} {suggested.toFixed(2).replace('.', ',')}/un. (÷{qty})
+                                    </button>
+                                  );
+                                }
+                                return null;
+                              })()}
                             </div>
                           </div>
                           <div className="flex gap-2">
@@ -3947,7 +4138,7 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                                 type="button"
                                 onClick={() => {
                                   setEditingSizeId(null);
-                                  setSizeForm({ name: '', price: '', oldPrice: '' });
+                                  setSizeForm({ name: '', price: '', oldPrice: '', unitPrice: '' });
                                 }}
                                 className="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-xs font-bold transition-all cursor-pointer"
                               >
@@ -3963,9 +4154,16 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                             <div key={idx} className="flex justify-between items-center p-3.5 bg-white/60 rounded-xl border border-gray-200">
                               <div>
                                 <span className="font-bold text-xs text-black block">{size.name}</span>
-                                <span className="text-[10px] text-gray-700 font-mono">
-                                  Preço: {size.price && size.price > 0 ? `${currencySymbol} ${size.price.toFixed(2).replace('.', ',')}` : 'Sob Consulta (Sem valor)'}
-                                </span>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[10px] text-gray-700 font-mono">
+                                    Preço: {size.price && size.price > 0 ? `${currencySymbol} ${size.price.toFixed(2).replace('.', ',')}` : 'Sob Consulta (Sem valor)'}
+                                  </span>
+                                  {typeof size.unitPrice === 'number' && size.unitPrice > 0 && (
+                                    <span className="text-[10px] text-gray-500 font-mono bg-gray-100 px-1.5 py-0.5 rounded">
+                                      Unitário: {currencySymbol} {size.unitPrice.toFixed(2).replace('.', ',')}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                               <div className="flex items-center gap-1">
                                 <button
@@ -3975,7 +4173,8 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                                     setSizeForm({
                                       name: size.name,
                                       price: (size.price && size.price > 0) ? size.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '',
-                                      oldPrice: ''
+                                      oldPrice: '',
+                                      unitPrice: (size.unitPrice && size.unitPrice > 0) ? size.unitPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : ''
                                     });
                                   }}
                                   className="p-1.5 text-blue-600 hover:bg-blue-50 hover:text-blue-800 rounded-lg transition-colors cursor-pointer"
@@ -3988,7 +4187,7 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                                   onClick={() => {
                                     if (editingSizeId === size.id) {
                                       setEditingSizeId(null);
-                                      setSizeForm({ name: '', price: '', oldPrice: '' });
+                                      setSizeForm({ name: '', price: '', oldPrice: '', unitPrice: '' });
                                     }
                                     setNewProduct({
                                       ...newProduct,
@@ -4008,6 +4207,49 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                               Nenhum tamanho adicionado ainda. É necessário adicionar pelo menos 1 tamanho.
                             </div>
                           )}
+                        </div>
+
+                        {/* Corporate card "From" price display mode for this item */}
+                        <div className="bg-white/40 p-3.5 rounded-xl border border-gray-200 space-y-1.5">
+                          <label className="text-[10px] font-bold uppercase text-gray-700 block">
+                            Preço exibido na lista do Corporate (&quot;From / A partir de&quot;)
+                          </label>
+                          {(() => {
+                            const sizesList = newProduct.sizes || [];
+                            const positiveTotals = sizesList
+                              .map(s => Number(s.price))
+                              .filter(p => !isNaN(p) && p > 0);
+                            const positiveUnits = sizesList
+                              .map(s => Number(s.unitPrice))
+                              .filter(u => !isNaN(u) && u > 0);
+
+                            const minTotalLabel = positiveTotals.length > 0
+                              ? `From ${currencySymbol}${Math.min(...positiveTotals).toFixed(2)}`
+                              : 'Sem preço cadastrado';
+                            const maxTotalLabel = positiveTotals.length > 0
+                              ? `From ${currencySymbol}${Math.max(...positiveTotals).toFixed(2)}`
+                              : 'Sem preço cadastrado';
+                            const minUnitLabel = positiveUnits.length > 0
+                              ? `From ${currencySymbol}${Math.min(...positiveUnits).toFixed(2)} each`
+                              : 'Sem valor unitário cadastrado';
+                            const maxUnitLabel = positiveUnits.length > 0
+                              ? `From ${currencySymbol}${Math.max(...positiveUnits).toFixed(2)} each`
+                              : 'Sem valor unitário cadastrado';
+
+                            return (
+                              <select
+                                className="w-full p-2.5 text-xs rounded-lg border border-gray-300 bg-white text-black font-semibold cursor-pointer"
+                                value={newProduct.b2bFromPriceMode || 'default'}
+                                onChange={e => setNewProduct({ ...newProduct, b2bFromPriceMode: e.target.value as any })}
+                              >
+                                <option value="default">Usar padrão das Configurações do Corporativo</option>
+                                <option value="min_total">Menor valor da caixa ({minTotalLabel})</option>
+                                <option value="max_total">Maior valor da caixa ({maxTotalLabel})</option>
+                                <option value="min_unit">Menor valor unitário / each ({minUnitLabel})</option>
+                                <option value="max_unit">Maior valor unitário / each ({maxUnitLabel})</option>
+                              </select>
+                            );
+                          })()}
                         </div>
                       </div>
                     )}
@@ -4039,7 +4281,7 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                       setPriceInput('');
                       setOldPriceInput('');
                       setEditingSizeId(null);
-                      setSizeForm({ name: '', price: '', oldPrice: '' });
+                      setSizeForm({ name: '', price: '', oldPrice: '', unitPrice: '' });
                     }}
                     className="w-full sm:w-auto px-8 py-3 rounded-xl bg-gray-200 font-bold text-black cursor-pointer"
                   >
@@ -4049,16 +4291,71 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
               </div>
             </form>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {products.map(product => (
-                <motion.div 
-                  layout
-                  key={product.id} 
-                  className={cn(
-                    "glass rounded-2xl overflow-hidden flex flex-col border transition-all",
-                    product.isActive === false ? "opacity-50 grayscale" : "border-white/20"
-                  )}
-                >
+            {(() => {
+              const searchTerm = productSearch.trim().toLowerCase();
+              const filteredProducts = products.filter(product => {
+                if (!searchTerm) return true;
+                const categoryTitle = categories.find(c => c.id === product.categoryId)?.title || '';
+                return (
+                  (product.title || '').toLowerCase().includes(searchTerm) ||
+                  (product.description || '').toLowerCase().includes(searchTerm) ||
+                  (product.tag || '').toLowerCase().includes(searchTerm) ||
+                  categoryTitle.toLowerCase().includes(searchTerm)
+                );
+              });
+
+              return (
+                <div className="space-y-4">
+                  <div className="bg-white/95 backdrop-blur-md p-4 rounded-2xl border border-gray-200/90 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    <div className="relative flex-grow">
+                      <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Buscar item cadastrado pelo nome..."
+                        className="w-full pl-10 pr-10 py-3 rounded-xl border border-gray-300 bg-white text-sm font-medium text-gray-900 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-gray-300"
+                        value={productSearch}
+                        onChange={e => setProductSearch(e.target.value)}
+                      />
+                      {productSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setProductSearch('')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-700 rounded-full hover:bg-gray-100 cursor-pointer"
+                          title="Limpar busca"
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-xs font-bold text-gray-600 px-2 whitespace-nowrap text-right sm:text-left">
+                      {filteredProducts.length} {filteredProducts.length === 1 ? 'item encontrado' : 'itens encontrados'}
+                    </div>
+                  </div>
+
+                  {filteredProducts.length === 0 ? (
+                    <div className="glass rounded-2xl p-10 text-center space-y-3 border border-white/20">
+                      <p className="text-sm font-bold text-gray-700">
+                        Nenhum item encontrado para &quot;{productSearch}&quot;.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setProductSearch('')}
+                        className="px-4 py-2 rounded-xl bg-white/80 hover:bg-white text-xs font-bold text-black border border-gray-200 shadow-sm cursor-pointer"
+                      >
+                        Limpar busca
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {filteredProducts.map(product => (
+                        <motion.div
+                          layout
+                          key={product.id}
+                          className={cn(
+                            "glass rounded-2xl overflow-hidden flex flex-col border transition-all",
+                            product.isActive === false ? "opacity-50 grayscale" : "border-white/20"
+                          )}
+                        >
                   <div className="h-48 relative">
                     <img src={product.image} alt={product.title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     <div className="absolute top-3 right-3 flex gap-2">
@@ -4142,9 +4439,13 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                       </div>
                     </div>
                   </div>
-                </motion.div>
-              ))}
-            </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -4915,7 +5216,7 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                             </div>
                           ))}
                           
-                          {order.total > 0 && !(order.isB2B || order.isPJ) && (
+                          {order.total > 0 && (!(order.isB2B || order.isPJ) || order.taxRate === 8.75 || Boolean(order.taxAmount && order.taxAmount > 0)) && (
                             <div className="border-t border-black/10 pt-3 mt-3 space-y-1.5 text-xs text-black font-semibold">
                               <div className="flex justify-between">
                                 <span className="opacity-60 font-medium">Subtotal:</span>
@@ -6770,7 +7071,7 @@ export default function Admin({ settings, setSettings, setIsAdmin }: {
                             <p className="text-xs text-gray-500 italic py-1">Cadastro de cliente (nenhum item neste registro).</p>
                           )}
                           
-                          {order.total > 0 && !(order.isB2B || order.isPJ) && (
+                          {order.total > 0 && (!(order.isB2B || order.isPJ) || order.taxRate === 8.75 || Boolean(order.taxAmount && order.taxAmount > 0)) && (
                             <div className="border-t border-gray-200 pt-2 space-y-1 text-xs text-gray-600 font-semibold">
                               <div className="flex justify-between">
                                 <span>Subtotal:</span>

@@ -19,6 +19,7 @@ export interface ProductSize {
   name: string;
   price: number;
   oldPrice?: number;
+  unitPrice?: number;
 }
 
 export interface Product {
@@ -40,6 +41,7 @@ export interface Product {
   cakeGalleryId?: string; // Associated image gallery
   order?: number;
   tag?: string;
+  b2bFromPriceMode?: 'default' | 'min_total' | 'max_total' | 'min_unit' | 'max_unit';
 }
 
 export interface CartItem {
@@ -183,5 +185,6 @@ export interface Settings {
   b2bBannerText?: string;
   b2bPriceDetailsTitle?: string;
   b2bPriceDetailsText?: string;
+  b2bFromPriceMode?: 'min_total' | 'max_total' | 'min_unit' | 'max_unit';
   salesReps?: string[];
 }

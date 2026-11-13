@@ -136,7 +136,15 @@ export const formatScriptTitle = (str?: string): string => {
   return trimmed;
 };
 
-export default function Menu({ settings: initialSettings }: { settings: Settings }) {
+export default function Menu({
+  settings: initialSettings,
+  initialCatalog = null,
+  isCorporateDirect = false
+}: {
+  settings: Settings;
+  initialCatalog?: 'catalog1' | 'catalog2' | 'catalog_b2b' | null;
+  isCorporateDirect?: boolean;
+}) {
   const settings = { ...initialSettings, language: 'en' };
   const t = translations['en'];
   const currencySymbol = settings.currency === 'USD' ? '$' : 'R$';
@@ -288,13 +296,21 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
   });
 
   const [activeScreen, setActiveScreen] = useState<'intro' | 'selector' | 'menu'>(() => {
+    if (isCorporateDirect || initialCatalog) return 'menu';
     if (settings.introEnabled !== false) return 'intro';
     if (settings.selectorEnabled !== false) return 'selector';
     return 'menu';
   });
-  const [selectedCatalog, setSelectedCatalog] = useState<'catalog1' | 'catalog2' | 'catalog_b2b' | null>(null);
+  const [selectedCatalog, setSelectedCatalog] = useState<'catalog1' | 'catalog2' | 'catalog_b2b' | null>(
+    () => initialCatalog || (isCorporateDirect ? 'catalog_b2b' : null)
+  );
 
   useEffect(() => {
+    if (isCorporateDirect || initialCatalog) {
+      setActiveScreen('menu');
+      setSelectedCatalog(initialCatalog || 'catalog_b2b');
+      return;
+    }
     if (settings) {
       if (settings.introEnabled === false && activeScreen === 'intro') {
         if (settings.selectorEnabled !== false) {
@@ -306,11 +322,13 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
         setActiveScreen('menu');
       }
     }
-  }, [settings]);
+  }, [settings, isCorporateDirect, initialCatalog]);
 
   useEffect(() => {
     if (activeScreen === 'menu' && !selectedCatalog) {
-      if (settings?.catalog1Active !== false) {
+      if (isCorporateDirect || initialCatalog) {
+        setSelectedCatalog(initialCatalog || 'catalog_b2b');
+      } else if (settings?.catalog1Active !== false) {
         setSelectedCatalog('catalog1');
       } else if (settings?.catalog2Active !== false) {
         setSelectedCatalog('catalog2');
@@ -318,7 +336,7 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
         setSelectedCatalog('catalog_b2b');
       }
     }
-  }, [activeScreen, selectedCatalog, settings]);
+  }, [activeScreen, selectedCatalog, settings, isCorporateDirect, initialCatalog]);
 
   useEffect(() => {
     if (selectedProductForDetails) {
@@ -1025,6 +1043,13 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
 
     const orderItems = cart.map(item => {
       const product = products.find(p => p.id === item.productId)!;
+      const basePrice = item.selectedSize ? item.selectedSize.price : ((product.price && product.price > 0) ? product.price : (product.oldPrice || 0));
+      let itemPrice = basePrice;
+      if (item.mealOptions?.sides) {
+        itemPrice += item.mealOptions.sides.reduce((sum, s) => sum + s.price, 0);
+      }
+      const hasPrice = itemPrice > 0;
+
       let titleStr = item.selectedSize ? `${product.title} (${item.selectedSize.name})` : product.title;
       if (item.cakeOptions) {
         const parts = [];
@@ -1039,10 +1064,15 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
       return {
         title: titleStr,
         quantity: item.quantity,
-        price: 0,
-        priceType: 'consult'
+        price: itemPrice,
+        priceType: hasPrice ? (product.priceType || 'fixed') : 'consult',
+        selectedSize: item.selectedSize || null
       };
     });
+
+    const b2bSubtotal = cartTotal;
+    const b2bTax = b2bSubtotal * 0.0875;
+    const b2bTotalWithTax = b2bSubtotal + b2bTax;
 
     const b2bOrderObj = {
       customerName: b2bName,
@@ -1058,7 +1088,11 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
       observation: b2bObservation,
       email: '',
       items: orderItems,
-      total: 0,
+      total: b2bTotalWithTax,
+      subtotal: b2bSubtotal,
+      taxRate: 8.75,
+      taxAmount: b2bTax,
+      commissionAmount: Number((b2bTotalWithTax * 0.10).toFixed(2)),
       createdAt: serverTimestamp(),
       orderLanguage: 'en',
       isB2B: true,
@@ -1114,9 +1148,18 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
       }
       message += `\n*--- ORDERED ITEMS ---*\n`;
       orderItems.forEach(item => {
-        message += `• ${item.quantity}x ${item.title}\n`;
+        if (item.price > 0) {
+          message += `• ${item.quantity}x ${item.title} - ${currencySymbol}${(item.price * item.quantity).toFixed(2)}\n`;
+        } else {
+          message += `• ${item.quantity}x ${item.title}\n`;
+        }
       });
-      message += `\n*Please note:* We’ve received your request and will contact you shortly to confirm pricing and delivery details. After confirmation, we will send you a secure payment link including any applicable delivery fee.\n`;
+      if (b2bSubtotal > 0) {
+        message += `\n*Subtotal:* ${currencySymbol}${b2bSubtotal.toFixed(2)}`;
+        message += `\n*Sales Tax (8.75%):* ${currencySymbol}${b2bTax.toFixed(2)}`;
+        message += `\n*Total:* ${currencySymbol}${b2bTotalWithTax.toFixed(2)}\n`;
+      }
+      message += `\n*Please note:* The total amount shown above already includes an 8.75% sales tax. We will contact you shortly to confirm your order and delivery details, after which we will send you a secure payment link including any applicable delivery fee.\n`;
       
       const encodedMessage = encodeURIComponent(message);
       const countryCode = settings.whatsappCountryCode?.replace(/\D/g, '') || '55';
@@ -1386,7 +1429,7 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
 
   return (
     <div className="flex-grow flex flex-col items-center p-4 pb-32">
-      {settings.selectorEnabled !== false && (
+      {settings.selectorEnabled !== false && !isCorporateDirect && (
         <button
           onClick={() => {
             setSelectedCatalog(null);
@@ -1542,20 +1585,70 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                           {settings.language === 'en' ? 'View Details' : 'Ver Detalhes'}
                         </button>
                         <div className="flex flex-col items-start mt-0.5">
-                          {selectedCatalog === 'catalog_b2b' ? (
-                            <span className="text-[9px] sm:text-[10px] uppercase font-serif font-black tracking-wider px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-950 border border-amber-500/20">
-                              Contract Rate
-                            </span>
-                          ) : (product.isCustomCake || product.priceType === 'consult') ? (
+                          {(product.isCustomCake || product.priceType === 'consult') ? (
                             <span className="text-[9px] sm:text-[10px] uppercase font-serif font-black tracking-wider px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-950 border border-amber-500/20">
                               {settings.language === 'en' ? 'On Request' : 'A Consultar'}
                             </span>
                           ) : product.sizes && product.sizes.length > 0 ? (
-                            <>
-                              <p className="text-xs sm:text-base font-bold" style={{ color: settings.itemElementsColor || settings.primaryColor }}>
-                                From {currencySymbol}{Math.min(...product.sizes.map(s => s.price)).toFixed(2)}
-                              </p>
-                            </>
+                            (() => {
+                              const positivePrices = product.sizes.map(s => s.price).filter(p => typeof p === 'number' && p > 0);
+                              const positiveUnits = product.sizes.map(s => s.unitPrice).filter((p): p is number => typeof p === 'number' && p > 0);
+
+                              if (selectedCatalog === 'catalog_b2b') {
+                                const mode = (product.b2bFromPriceMode && product.b2bFromPriceMode !== 'default')
+                                  ? product.b2bFromPriceMode
+                                  : (settings.b2bFromPriceMode || 'min_total');
+                                const unitSuffix = settings.language === 'en' ? 'each' : '/ un.';
+
+                                if (mode === 'min_unit' && positiveUnits.length > 0) {
+                                  return (
+                                    <p className="text-xs sm:text-base font-bold" style={{ color: settings.itemElementsColor || settings.primaryColor }}>
+                                      From {currencySymbol}{Math.min(...positiveUnits).toFixed(2)} {unitSuffix}
+                                    </p>
+                                  );
+                                }
+                                if (mode === 'max_unit' && positiveUnits.length > 0) {
+                                  return (
+                                    <p className="text-xs sm:text-base font-bold" style={{ color: settings.itemElementsColor || settings.primaryColor }}>
+                                      From {currencySymbol}{Math.max(...positiveUnits).toFixed(2)} {unitSuffix}
+                                    </p>
+                                  );
+                                }
+                                if (mode === 'max_total' && positivePrices.length > 0) {
+                                  return (
+                                    <p className="text-xs sm:text-base font-bold" style={{ color: settings.itemElementsColor || settings.primaryColor }}>
+                                      From {currencySymbol}{Math.max(...positivePrices).toFixed(2)}
+                                    </p>
+                                  );
+                                }
+                                if (positivePrices.length > 0) {
+                                  return (
+                                    <p className="text-xs sm:text-base font-bold" style={{ color: settings.itemElementsColor || settings.primaryColor }}>
+                                      From {currencySymbol}{Math.min(...positivePrices).toFixed(2)}
+                                    </p>
+                                  );
+                                }
+                                if (positiveUnits.length > 0) {
+                                  return (
+                                    <p className="text-xs sm:text-base font-bold" style={{ color: settings.itemElementsColor || settings.primaryColor }}>
+                                      From {currencySymbol}{Math.min(...positiveUnits).toFixed(2)} {unitSuffix}
+                                    </p>
+                                  );
+                                }
+                              } else if (positivePrices.length > 0) {
+                                return (
+                                  <p className="text-xs sm:text-base font-bold" style={{ color: settings.itemElementsColor || settings.primaryColor }}>
+                                    From {currencySymbol}{Math.min(...positivePrices).toFixed(2)}
+                                  </p>
+                                );
+                              }
+
+                              return (
+                                <span className="text-[9px] sm:text-[10px] uppercase font-serif font-black tracking-wider px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-950 border border-amber-500/20">
+                                  {selectedCatalog === 'catalog_b2b' ? 'Contract Rate' : (settings.language === 'en' ? 'On Request' : 'A Consultar')}
+                                </span>
+                              );
+                            })()
                           ) : ((product.price && product.price > 0) || (product.oldPrice && product.oldPrice > 0)) ? (
                             <>
                               {product.price && product.price > 0 && product.oldPrice && product.oldPrice > 0 ? (
@@ -1575,7 +1668,7 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                             </>
                           ) : (
                             <span className="text-[9px] sm:text-[10px] uppercase font-serif font-black tracking-wider px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-950 border border-amber-500/20">
-                              {settings.language === 'en' ? 'On Request' : 'A Consultar'}
+                              {selectedCatalog === 'catalog_b2b' ? 'Contract Rate' : (settings.language === 'en' ? 'On Request' : 'A Consultar')}
                             </span>
                           )}
                         </div>
@@ -1719,7 +1812,7 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
               </div>
               <div className="flex items-center gap-2 font-serif text-sm">
                 <span className="bg-white/20 px-2.5 py-1 rounded-full">{cartItemsCount} {cartItemsCount === 1 ? 'item' : 'itens'}</span>
-                {selectedCatalog !== 'catalog_b2b' && (
+                {(selectedCatalog !== 'catalog_b2b' || cartTotal > 0) && (
                   <span>{currencySymbol}{cartTotal.toFixed(2)}</span>
                 )}
               </div>
@@ -1834,11 +1927,11 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                                   </div>
                                 )}
                                 <div className="flex flex-col items-start mt-1.5">
-                                  {selectedCatalog === 'catalog_b2b' ? null : (product.isCustomCake || product.priceType === 'consult') ? (
+                                  {(product.isCustomCake || product.priceType === 'consult') ? (
                                     <span className="text-[10px] uppercase font-serif font-black tracking-wider px-2.5 py-1 rounded-xl bg-amber-500/10 text-amber-950 border border-amber-500/20">
                                       {settings.language === 'en' ? 'On Request' : 'A Consultar'}
                                     </span>
-                                  ) : item.selectedSize ? (
+                                  ) : item.selectedSize && item.selectedSize.price > 0 ? (
                                     <>
                                       {item.selectedSize.oldPrice && item.selectedSize.oldPrice > 0 && (
                                         <span className="text-[10px] line-through opacity-40">
@@ -1868,7 +1961,7 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                                     </>
                                   ) : (
                                     <span className="text-[10px] uppercase font-serif font-black tracking-wider px-2.5 py-1 rounded-xl bg-amber-500/10 text-amber-950 border border-amber-500/20">
-                                      {settings.language === 'en' ? 'On Request' : 'A Consultar'}
+                                      {selectedCatalog === 'catalog_b2b' ? 'Contract Rate' : (settings.language === 'en' ? 'On Request' : 'A Consultar')}
                                     </span>
                                   )}
                                 </div>
@@ -1936,13 +2029,26 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                             )}
                           </div>
 
-                          <div className="p-3.5 rounded-2xl bg-stone-100 border border-stone-200 text-stone-900 font-sans text-xs">
-                            <p className="font-bold text-[11px] uppercase tracking-wider text-stone-800 mb-1">
-                              ✦ Corporate Account Order
-                            </p>
-                            <p className="text-[11px] text-stone-600 leading-relaxed font-medium">
-                              Volume quote request without upfront retail pricing. Pricing will be confirmed and invoiced directly by our corporate team.
-                            </p>
+                          {/* Corporate Pricing Breakdown with 8.75% Sales Tax */}
+                          <div className="p-4 rounded-2xl bg-white/70 border border-stone-200 text-stone-900 font-sans space-y-2 shadow-xs">
+                            <div className="flex items-center justify-between text-xs font-semibold text-stone-600">
+                              <span>Subtotal:</span>
+                              <span>{currencySymbol}{cartTotal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs font-semibold text-amber-900">
+                              <span>Sales Tax (8.75%):</span>
+                              <span>+ {currencySymbol}{(cartTotal * 0.0875).toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center justify-between pt-2 border-t border-stone-200">
+                              <span className="text-base font-bold text-black">Total (incl. tax):</span>
+                              <span className="text-xl font-black text-black">
+                                {currencySymbol}{(cartTotal * 1.0875).toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="p-2.5 rounded-xl bg-yellow-50 border border-yellow-100 text-[10px] text-amber-900 font-bold flex items-start gap-1.5 leading-relaxed mt-1">
+                              <span>⚠️</span>
+                              <span>An 8.75% sales tax is included in the final corporate order total above.</span>
+                            </div>
                           </div>
                         </div>
                       ) : (
@@ -2352,6 +2458,26 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                         />
                       </div>
 
+                      {/* Corporate Order Total Summary with Tax */}
+                      {cartTotal > 0 && (
+                        <div className="p-4 rounded-2xl bg-white/70 border border-stone-200 text-stone-900 font-sans space-y-1.5">
+                          <div className="flex items-center justify-between text-xs font-semibold text-stone-600">
+                            <span>Subtotal ({totalB2bPackages} pkgs):</span>
+                            <span>{currencySymbol}{cartTotal.toFixed(2)}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs font-semibold text-amber-900">
+                            <span>Sales Tax (8.75%):</span>
+                            <span>+ {currencySymbol}{(cartTotal * 0.0875).toFixed(2)}</span>
+                          </div>
+                          <div className="flex items-center justify-between pt-1.5 border-t border-stone-200">
+                            <span className="text-sm font-bold text-black">Final Total:</span>
+                            <span className="text-lg font-black text-black">
+                              {currencySymbol}{(cartTotal * 1.0875).toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
                       <div className="flex gap-3 pt-4">
                         <button 
                           type="button"
@@ -2610,21 +2736,18 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                   </div>
 
                   {/* Pricing Display */}
-                  {!(selectedCatalog === 'catalog_b2b' && (!selectedProductForDetails.sizes || selectedProductForDetails.sizes.length === 0)) && (
-                    <div className="p-4 rounded-2xl bg-white/50 border border-white/20">
-                      {selectedCatalog !== 'catalog_b2b' && (
-                        <label className="text-[10px] font-black uppercase text-black/50 block tracking-wider mb-1">
-                          Price Details
-                        </label>
-                      )}
-                      {selectedCatalog === 'catalog_b2b' ? (
-                        <div className="space-y-4">
-                          {selectedProductForDetails.sizes && selectedProductForDetails.sizes.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-white/50 border border-white/20">
+                    <label className="text-[10px] font-black uppercase text-black/50 block tracking-wider mb-1">
+                      Price Details
+                    </label>
+                    {selectedCatalog === 'catalog_b2b' ? (
+                      <div className="space-y-4">
+                        {selectedProductForDetails.sizes && selectedProductForDetails.sizes.length > 0 ? (
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-black/60 mb-2">
+                              {settings.language === 'en' ? 'Available Options (Select to add):' : 'Opções Disponíveis (Selecione para adicionar):'}
+                            </p>
                             <div className="space-y-2">
-                              <p className="text-xs font-bold text-black/60 mb-2">
-                                {settings.language === 'en' ? 'Available Options (Select to add):' : 'Opções Disponíveis (Selecione para adicionar):'}
-                              </p>
-                              <div className="space-y-2">
                               {selectedProductForDetails.sizes.map((s, idx) => {
                                 const cartItem = cart.find(item => item.productId === selectedProductForDetails.id && item.selectedSize?.id === s.id && !item.mealOptions);
                                 const qty = cartItem ? cartItem.quantity : 0;
@@ -2635,10 +2758,17 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                                   >
                                     <div className="flex flex-col">
                                       <span className="text-sm font-bold text-black">{s.name}</span>
-                                      {selectedCatalog !== 'catalog_b2b' && typeof s.price === 'number' && s.price > 0 && (
-                                        <span className="text-xs text-gray-500 font-extrabold mt-0.5">
-                                          {currencySymbol}{s.price.toFixed(2)}
-                                        </span>
+                                      {typeof s.price === 'number' && s.price > 0 && (
+                                        <div className="flex items-baseline gap-1.5 flex-wrap mt-0.5">
+                                          <span className="text-sm font-black" style={{ color: settings.itemElementsColor || settings.primaryColor || '#111827' }}>
+                                            {currencySymbol}{s.price.toFixed(2)}
+                                          </span>
+                                          {typeof s.unitPrice === 'number' && s.unitPrice > 0 && (
+                                            <span className="text-[10px] text-black/55 font-semibold">
+                                              ({currencySymbol}{s.unitPrice.toFixed(2)} {settings.language === 'en' ? 'each' : '/ un.'})
+                                            </span>
+                                          )}
+                                        </div>
                                       )}
                                     </div>
                                     
@@ -2678,6 +2808,29 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                                 );
                               })}
                             </div>
+                          </div>
+                        ) : ((selectedProductForDetails.price && selectedProductForDetails.price > 0) || (selectedProductForDetails.oldPrice && selectedProductForDetails.oldPrice > 0)) ? (
+                          <div className="flex items-baseline gap-2">
+                            {selectedProductForDetails.price && selectedProductForDetails.price > 0 && selectedProductForDetails.oldPrice && selectedProductForDetails.oldPrice > 0 ? (
+                              <>
+                                <span className="text-sm line-through opacity-40">
+                                  {currencySymbol}{selectedProductForDetails.oldPrice.toFixed(2)}
+                                </span>
+                                <span className="text-2xl font-bold" style={{ color: settings.primaryColor }}>
+                                  {currencySymbol}{selectedProductForDetails.price.toFixed(2)}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-2xl font-bold" style={{ color: settings.primaryColor }}>
+                                {currencySymbol}{(selectedProductForDetails.price && selectedProductForDetails.price > 0 ? selectedProductForDetails.price : selectedProductForDetails.oldPrice).toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <span className="text-lg font-bold text-amber-950 block font-serif">
+                              Contract Rate
+                            </span>
                           </div>
                         )}
                       </div>
@@ -2727,10 +2880,17 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                                     </div>
                                     <div className="flex flex-col">
                                       <span className="text-sm font-bold text-black">{s.name}</span>
-                                      {selectedCatalog !== 'catalog_b2b' && s.price && s.price > 0 && (
-                                        <span className="text-xs text-gray-500 font-extrabold mt-0.5">
-                                          {currencySymbol}{s.price.toFixed(2)}
-                                        </span>
+                                      {typeof s.price === 'number' && s.price > 0 && (
+                                        <div className="flex items-baseline gap-1.5 flex-wrap mt-0.5">
+                                          <span className="text-sm font-black" style={{ color: settings.itemElementsColor || settings.primaryColor || '#111827' }}>
+                                            {currencySymbol}{s.price.toFixed(2)}
+                                          </span>
+                                          {typeof s.unitPrice === 'number' && s.unitPrice > 0 && (
+                                            <span className="text-[10px] text-black/55 font-semibold">
+                                              ({currencySymbol}{s.unitPrice.toFixed(2)} {settings.language === 'en' ? 'each' : '/ un.'})
+                                            </span>
+                                          )}
+                                        </div>
                                       )}
                                     </div>
                                   </div>
@@ -2748,10 +2908,17 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                               >
                                 <div className="flex flex-col">
                                   <span className="text-sm font-bold text-black">{s.name}</span>
-                                  {selectedCatalog !== 'catalog_b2b' && s.price && s.price > 0 && (
-                                    <span className="text-xs text-gray-500 font-extrabold mt-0.5">
-                                      {currencySymbol}{s.price.toFixed(2)}
-                                    </span>
+                                  {typeof s.price === 'number' && s.price > 0 && (
+                                    <div className="flex items-baseline gap-1.5 flex-wrap mt-0.5">
+                                      <span className="text-sm font-black" style={{ color: settings.itemElementsColor || settings.primaryColor || '#111827' }}>
+                                        {currencySymbol}{s.price.toFixed(2)}
+                                      </span>
+                                      {typeof s.unitPrice === 'number' && s.unitPrice > 0 && (
+                                        <span className="text-[10px] text-black/55 font-semibold">
+                                          ({currencySymbol}{s.unitPrice.toFixed(2)} {settings.language === 'en' ? 'each' : '/ un.'})
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                                 
@@ -2805,7 +2972,6 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                       </div>
                     )}
                   </div>
-                )}
 
                   {/* Extended Description Section */}
                   <div className="space-y-2 text-black">
@@ -3275,7 +3441,7 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                       style={{ backgroundColor: settings.primaryColor || '#865d39', color: getContrastText(settings.primaryColor || '#865d39') }}
                     >
                       <span>{getButtonLabel()}</span>
-                      {totalPrice > 0 && selectedCatalog !== 'catalog_b2b' && !hasItemsInCart && (
+                      {totalPrice > 0 && !hasItemsInCart && (
                         <span className="opacity-80 font-normal">
                           ({currencySymbol}{totalPrice.toFixed(2)})
                         </span>
@@ -3623,10 +3789,17 @@ export default function Menu({ settings: initialSettings }: { settings: Settings
                               >
                                 <div className="flex flex-col">
                                   <span className="text-sm font-bold text-black">{s.name}</span>
-                                  {selectedCatalog !== 'catalog_b2b' && s.price && s.price > 0 && (
-                                    <span className="text-xs text-gray-500 font-extrabold mt-0.5">
-                                      {currencySymbol}{s.price.toFixed(2)}
-                                    </span>
+                                  {typeof s.price === 'number' && s.price > 0 && (
+                                    <div className="flex items-baseline gap-1.5 flex-wrap mt-0.5">
+                                      <span className="text-sm font-black" style={{ color: settings.itemElementsColor || settings.primaryColor || '#111827' }}>
+                                        {currencySymbol}{s.price.toFixed(2)}
+                                      </span>
+                                      {typeof s.unitPrice === 'number' && s.unitPrice > 0 && (
+                                        <span className="text-[10px] text-black/55 font-semibold">
+                                          ({currencySymbol}{s.unitPrice.toFixed(2)} {settings.language === 'en' ? 'each' : '/ un.'})
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                                 

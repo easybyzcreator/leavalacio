@@ -8,7 +8,16 @@ import { Settings } from './types';
 import { Toaster } from 'sonner';
 
 export default function App() {
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(() => {
+    const path = window.location.pathname;
+    const hash = window.location.hash;
+    return path === '/admin' || path === '/admin/' || hash === '#/admin' || hash === '#admin';
+  });
+  const [isCorporateDirect, setIsCorporateDirect] = useState(() => {
+    const path = window.location.pathname;
+    const hash = window.location.hash;
+    return path === '/order' || path === '/order/' || hash === '#/order' || hash === '#order';
+  });
   const [settings, setSettings] = useState<Settings>({
     logo: 'https://i.ibb.co/SXRBhD32/dende.png',
     primaryColor: '#865d39',
@@ -47,12 +56,19 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check URL for admin path
-    const path = window.location.pathname;
-    const hash = window.location.hash;
-    if (path === '/admin' || hash === '#/admin' || hash === '#admin') {
-      setIsAdmin(true);
-    }
+    // Check URL for admin or direct corporate order path
+    const checkRoute = () => {
+      const path = window.location.pathname;
+      const hash = window.location.hash;
+      if (path === '/admin' || path === '/admin/' || hash === '#/admin' || hash === '#admin') {
+        setIsAdmin(true);
+        setIsCorporateDirect(false);
+      } else if (path === '/order' || path === '/order/' || hash === '#/order' || hash === '#order') {
+        setIsAdmin(false);
+        setIsCorporateDirect(true);
+      }
+    };
+    checkRoute();
 
     // Load settings for global styles
     const unsub = onSnapshot(doc(db, 'configuracoes', 'geral'), (docSnap) => {
@@ -132,7 +148,11 @@ export default function App() {
           <Admin settings={settings} setSettings={setSettings} setIsAdmin={setIsAdmin} />
         ) : (
           <>
-            <Menu settings={{ ...settings, language: 'en', currency: 'USD' }} />
+            <Menu
+              settings={{ ...settings, language: 'en', currency: 'USD' }}
+              initialCatalog={isCorporateDirect ? 'catalog_b2b' : null}
+              isCorporateDirect={isCorporateDirect}
+            />
             <Footer primaryColor={settings?.primaryColor} />
           </>
         )}
