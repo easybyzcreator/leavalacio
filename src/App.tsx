@@ -7,17 +7,32 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { Settings } from './types';
 import { Toaster } from 'sonner';
 
+const getRouteFlags = () => {
+  const path = window.location.pathname.toLowerCase().replace(/\/+$/, '');
+  const rawHash = window.location.hash.toLowerCase().split('?')[0].replace(/\/+$/, '');
+  const hash = rawHash.startsWith('#/')
+    ? rawHash.slice(1)
+    : rawHash.startsWith('#')
+      ? `/${rawHash.slice(1)}`
+      : rawHash;
+  const searchParams = new URLSearchParams(window.location.search);
+  const queryMode = (searchParams.get('catalog') || searchParams.get('mode') || '').toLowerCase();
+
+  const admin = path === '/admin' || hash === '/admin';
+  const corporate =
+    !admin &&
+    (path === '/order' ||
+      hash === '/order' ||
+      queryMode === 'order' ||
+      queryMode === 'corporate' ||
+      queryMode === 'b2b');
+
+  return { admin, corporate };
+};
+
 export default function App() {
-  const [isAdmin, setIsAdmin] = useState(() => {
-    const path = window.location.pathname;
-    const hash = window.location.hash;
-    return path === '/admin' || path === '/admin/' || hash === '#/admin' || hash === '#admin';
-  });
-  const [isCorporateDirect, setIsCorporateDirect] = useState(() => {
-    const path = window.location.pathname;
-    const hash = window.location.hash;
-    return path === '/order' || path === '/order/' || hash === '#/order' || hash === '#order';
-  });
+  const [isAdmin, setIsAdmin] = useState(() => getRouteFlags().admin);
+  const [isCorporateDirect, setIsCorporateDirect] = useState(() => getRouteFlags().corporate);
   const [settings, setSettings] = useState<Settings>({
     logo: 'https://i.ibb.co/SXRBhD32/dende.png',
     primaryColor: '#865d39',
@@ -56,19 +71,15 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check URL for admin or direct corporate order path
+    // Check URL for admin or direct corporate order path (case-insensitive + hash/popstate reactive)
     const checkRoute = () => {
-      const path = window.location.pathname;
-      const hash = window.location.hash;
-      if (path === '/admin' || path === '/admin/' || hash === '#/admin' || hash === '#admin') {
-        setIsAdmin(true);
-        setIsCorporateDirect(false);
-      } else if (path === '/order' || path === '/order/' || hash === '#/order' || hash === '#order') {
-        setIsAdmin(false);
-        setIsCorporateDirect(true);
-      }
+      const { admin, corporate } = getRouteFlags();
+      setIsAdmin(admin);
+      setIsCorporateDirect(corporate);
     };
     checkRoute();
+    window.addEventListener('hashchange', checkRoute);
+    window.addEventListener('popstate', checkRoute);
 
     // Load settings for global styles
     const unsub = onSnapshot(doc(db, 'configuracoes', 'geral'), (docSnap) => {
@@ -104,7 +115,11 @@ export default function App() {
       }
     });
 
-    return () => unsub();
+    return () => {
+      window.removeEventListener('hashchange', checkRoute);
+      window.removeEventListener('popstate', checkRoute);
+      unsub();
+    };
   }, []);
 
   const glassColor = settings?.glassColor || 'rgba(255, 255, 255, 0.4)';
